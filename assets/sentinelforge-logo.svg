@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 120">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f1015"/>
+      <stop offset="100%" style="stop-color:#0a0b0e"/>
+    </linearGradient>
+    
+    <!-- Icon gradient - vibrant green -->
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2dffa8"/>
+      <stop offset="100%" style="stop-color:#00d98b"/>
+    </linearGradient>
+    
+    <!-- Text gradient -->
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2dffa8"/>
+      <stop offset="50%" style="stop-color:#5fffc4"/>
+      <stop offset="100%" style="stop-color:#2dffa8"/>
+    </linearGradient>
+    
+    <!-- Subtle glow for icon -->
+    <filter id="iconGlow">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#00ff99" flood-opacity="0.4"/>
+    </filter>
+    
+    <!-- Text glow -->
+    <filter id="textGlow">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#00ff99" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="600" height="120" fill="url(#bgGrad)"/>
+  
+  <!-- Icon box with glow -->
+  <g filter="url(#iconGlow)">
+    <rect x="28" y="22" width="76" height="76" rx="14" fill="url(#iconGrad)"/>
+  </g>
+  
+  <!-- SF text in icon - bold and clear -->
+  <text x="66" y="72" 
+        font-family="Arial Black, Arial, sans-serif" 
+        font-size="34" 
+        font-weight="900" 
+        fill="#0a0b0e" 
+        text-anchor="middle">SF</text>
+  
+  <!-- SENTINELFORGE text - clear and bold -->
+  <text x="124" y="62" 
+        font-family="Arial Black, Arial, sans-serif" 
+        font-size="38" 
+        font-weight="900" 
+        fill="url(#textGrad)" 
+        filter="url(#textGlow)"
+        letter-spacing="4">SENTINELFORGE</text>
+  
+  <!-- Subtitle - clean and readable -->
+  <text x="126" y="88" 
+        font-family="Arial, sans-serif" 
+        font-size="12" 
+        font-weight="600" 
+        fill="#5a5a6a"
+        letter-spacing="5">THREAT INTELLIGENCE PLATFORM</text>
+</svg>
