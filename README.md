@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/sentinelforge-logo.png" alt="SentinelForge Logo" width="600"/>
+  <img src="assets/sentinelforge-logo.png" alt="SentinelForge Logo" width="900"/>
 </p>
 
 <p align="center">
