@@ -6,27 +6,27 @@
   <strong>Forge Your Defense • Stay Vigilant</strong>
 </p>
 
+
+<!-- Repo Stats -->
 <p align="center">
-  <a href="https://github.com/lloredia/SentinelForge/commits/main">
-    <img src="https://img.shields.io/github/last-commit/lloredia/SentinelForge?style=for-the-badge&color=ff6b00" alt="Last Commit"/>
-  </a>
-  <a href="#">
-    <img src="https://img.shields.io/github/languages/top/lloredia/SentinelForge?style=for-the-badge&color=00ffaa" alt="Top Language"/>
-  </a>
-  <a href="#">
-    <img src="https://img.shields.io/github/languages/count/lloredia/SentinelForge?style=for-the-badge&color=ffd000" alt="Language Count"/>
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License"/>
-  </a>
+  <img src="https://img.shields.io/github/last-commit/lloredia/SentinelForge?style=plastic" />
+  <img src="https://img.shields.io/github/languages/top/lloredia/SentinelForge?style=plastic" />
+  <img src="https://img.shields.io/github/languages/count/lloredia/SentinelForge?style=plastic" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=plastic" />
 </p>
 
+<!-- Tech Stack -->
 <p align="center">
-  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust"/>
-  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React"/>
-  <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL"/>
-  <img src="https://img.shields.io/badge/Axum-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Axum"/>
+  <img src="https://img.shields.io/badge/Rust-black?logo=rust&logoColor=white&style=plastic" />
+  <img src="https://img.shields.io/badge/Axum-black?logo=rust&logoColor=white&style=plastic" />
+  <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB&style=plastic" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white&style=plastic" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white&style=plastic" />
+  <img src="https://img.shields.io/badge/JSON-000000?logo=json&logoColor=white&style=plastic" />
+  <img src="https://img.shields.io/badge/SQL-003B57?logo=databricks&logoColor=white&style=plastic" />
 </p>
+
+
 
 ---
 
