@@ -329,7 +329,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  <img src="sentinelforge-logo-small.png" alt="SentinelForge" width="100"/>
+  <img src="asset/sentinelforge-logo-small.png" alt="SentinelForge" width="100"/>
   <br/>
   <strong>SentinelForge</strong> - Forge Your Defense
 </p>
