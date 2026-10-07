@@ -1,10 +1,13 @@
 //! WHOIS enrichment provider
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::enrichment::EnrichmentProvider;
+use crate::models::ioc_utils::validate_ioc_value;
 use crate::models::{Indicator, IocType, WhoisData};
 
 /// WHOIS enrichment provider
@@ -18,26 +21,55 @@ impl WhoisProvider {
         Self {}
     }
 
-    /// Perform WHOIS lookup for a domain
+    /// Perform WHOIS lookup for a domain.
+    ///
+    /// The query is sent only to a fixed server for the TLD. Referral servers
+    /// in the response are not contacted.
     pub async fn lookup(&self, domain: &str) -> Result<WhoisData> {
-        // Use whois-rust crate for synchronous lookup
-        // Wrap in spawn_blocking for async compatibility
-        let domain = domain.to_string();
-        
-        let result = tokio::task::spawn_blocking(move || {
-            whois_rust::WhoIs::from_path("./data/servers.json")
-                .or_else(|_| whois_rust::WhoIs::from_string(include_str!("../../data/whois_servers.json")))
-                .ok()
-                .and_then(|whois| whois.lookup(whois_rust::WhoIsLookupOptions::from_string(&domain).ok()?).ok())
-        })
-        .await
-        .context("WHOIS lookup task failed")?;
-
-        let raw = result.unwrap_or_default();
-        let data = parse_whois_response(&raw);
-        
-        Ok(data)
+        validate_ioc_value(domain, Some(&IocType::Domain)).map_err(|msg| anyhow::anyhow!(msg))?;
+        let host = whois_host(domain);
+        let raw = query_whois(host, domain).await?;
+        Ok(parse_whois_response(&raw))
     }
+}
+
+fn whois_host(domain: &str) -> &'static str {
+    match domain.rsplit('.').next().unwrap_or("") {
+        "com" | "net" => "whois.verisign-grs.com",
+        "org" => "whois.pir.org",
+        "io" => "whois.nic.io",
+        "app" | "dev" => "whois.nic.google",
+        "uk" => "whois.nic.uk",
+        _ => "whois.iana.org",
+    }
+}
+
+async fn query_whois(host: &str, domain: &str) -> Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(8),
+        tokio::net::TcpStream::connect((host, 43)),
+    )
+    .await
+    .context("WHOIS connect timed out")?
+    .with_context(|| format!("WHOIS connect to {host} failed"))?;
+
+    tokio::time::timeout(
+        Duration::from_secs(8),
+        stream.write_all(format!("{domain}\r\n").as_bytes()),
+    )
+    .await
+    .context("WHOIS write timed out")?
+    .context("WHOIS write failed")?;
+
+    let mut buf = Vec::new();
+    tokio::time::timeout(Duration::from_secs(8), stream.read_to_end(&mut buf))
+        .await
+        .context("WHOIS read timed out")?
+        .context("WHOIS read failed")?;
+    buf.truncate(256 * 1024);
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 impl Default for WhoisProvider {

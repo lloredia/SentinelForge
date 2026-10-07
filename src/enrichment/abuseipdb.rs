@@ -1,10 +1,14 @@
 //! AbuseIPDB enrichment provider
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+
+use crate::http_util::{external_client, redact};
 
 use crate::enrichment::EnrichmentProvider;
 use crate::models::{Indicator, IocType};
@@ -19,7 +23,7 @@ struct AbuseIpDbResponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AbuseIpDbData {
+pub(crate) struct AbuseIpDbData {
     ip_address: String,
     is_public: bool,
     ip_version: i32,
@@ -43,18 +47,15 @@ pub struct AbuseIpDbProvider {
 
 impl AbuseIpDbProvider {
     /// Create a new AbuseIPDB provider
-    pub fn new(api_key: String) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self { client, api_key }
+    pub fn new(api_key: String) -> Result<Self> {
+        let client = external_client(Duration::from_secs(10))?;
+        Ok(Self { client, api_key })
     }
 
     /// Check an IP address against AbuseIPDB
-    pub async fn check_ip(&self, ip: &str) -> Result<AbuseIpDbData> {
-        let response = self.client
+    pub(crate) async fn check_ip(&self, ip: &str) -> Result<AbuseIpDbData> {
+        let response = self
+            .client
             .get(format!("{}/check", ABUSEIPDB_API_URL))
             .header("Key", &self.api_key)
             .header("Accept", "application/json")
@@ -68,9 +69,7 @@ impl AbuseIpDbProvider {
             .context("Failed to send request to AbuseIPDB")?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("AbuseIPDB API error: {} - {}", status, body);
+            anyhow::bail!("AbuseIPDB API error: status {}", response.status());
         }
 
         let data: AbuseIpDbResponse = response
@@ -94,16 +93,14 @@ impl AbuseIpDbProvider {
             .collect::<Vec<_>>()
             .join(",");
 
-        let mut form = vec![
-            ("ip", ip.to_string()),
-            ("categories", categories_str),
-        ];
+        let mut form = vec![("ip", ip.to_string()), ("categories", categories_str)];
 
         if let Some(c) = comment {
             form.push(("comment", c.to_string()));
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/report", ABUSEIPDB_API_URL))
             .header("Key", &self.api_key)
             .header("Accept", "application/json")
@@ -113,9 +110,7 @@ impl AbuseIpDbProvider {
             .context("Failed to report IP to AbuseIPDB")?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("AbuseIPDB report error: {} - {}", status, body);
+            anyhow::bail!("AbuseIPDB report error: status {}", response.status());
         }
 
         Ok(())
@@ -137,7 +132,10 @@ impl EnrichmentProvider for AbuseIpDbProvider {
     }
 
     async fn enrich(&self, indicator: &Indicator) -> Result<Option<Value>> {
-        let data = self.check_ip(&indicator.value).await?;
+        let data = self
+            .check_ip(&indicator.value)
+            .await
+            .map_err(|err| anyhow::anyhow!(redact(&err.to_string(), &[&self.api_key])))?;
 
         Ok(Some(json!({
             "abuse_confidence_score": data.abuse_confidence_score,

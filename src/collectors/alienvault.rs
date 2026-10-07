@@ -1,23 +1,26 @@
 //! AlienVault OTX feed collector
 
+use std::time::Duration;
+
+use crate::collectors::FeedCollector;
+use crate::http_util::{external_client, redact};
+use crate::models::{CreateIndicatorRequest, IocType, Severity, Tlp};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use std::time::Duration;
-
-use crate::collectors::FeedCollector;
-use crate::models::{CreateIndicatorRequest, IocType, Severity, Tlp};
 
 const OTX_API_URL: &str = "https://otx.alienvault.com/api/v1";
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OtxPulseResponse {
     results: Vec<OtxPulse>,
     next: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OtxPulse {
     id: String,
     name: String,
@@ -30,6 +33,7 @@ struct OtxPulse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OtxIndicator {
     indicator: String,
     #[serde(rename = "type")]
@@ -45,18 +49,15 @@ pub struct AlienVaultCollector {
 
 impl AlienVaultCollector {
     /// Create a new AlienVault OTX collector
-    pub fn new(api_key: String) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self { client, api_key }
+    pub fn new(api_key: String) -> Result<Self> {
+        let client = external_client(Duration::from_secs(15))?;
+        Ok(Self { client, api_key })
     }
 
     /// Fetch subscribed pulses
     async fn fetch_subscribed_pulses(&self) -> Result<Vec<OtxPulse>> {
-        let response = self.client
+        let response = self
+            .client
             .get(format!("{}/pulses/subscribed", OTX_API_URL))
             .header("X-OTX-API-KEY", &self.api_key)
             .query(&[("limit", "50"), ("modified_since", "7d")])
@@ -65,9 +66,7 @@ impl AlienVaultCollector {
             .context("Failed to fetch OTX pulses")?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("OTX API error: {} - {}", status, body);
+            anyhow::bail!("OTX API error: status {}", response.status());
         }
 
         let data: OtxPulseResponse = response
@@ -110,19 +109,22 @@ impl FeedCollector for AlienVaultCollector {
     }
 
     async fn fetch(&self) -> Result<Vec<CreateIndicatorRequest>> {
-        let pulses = self.fetch_subscribed_pulses().await?;
+        let pulses = self
+            .fetch_subscribed_pulses()
+            .await
+            .map_err(|err| anyhow::anyhow!(redact(&err.to_string(), &[&self.api_key])))?;
         let mut indicators = vec![];
 
         for pulse in pulses {
             let tlp = Self::convert_tlp(pulse.tlp.as_deref());
-            
+
             let mut base_tags: Vec<String> = pulse.tags.clone();
             base_tags.push(format!("pulse:{}", pulse.id));
-            
+
             if let Some(ref adversary) = pulse.adversary {
                 base_tags.push(format!("adversary:{}", adversary));
             }
-            
+
             for malware in &pulse.malware_families {
                 base_tags.push(format!("malware:{}", malware));
             }

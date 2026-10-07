@@ -1,27 +1,35 @@
 //! DNS enrichment provider
 
-use anyhow::Result;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde_json::{json, Value};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::ResolverOpts;
+use hickory_resolver::proto::rr::RData;
+use serde_json::{Value, json};
+
+use crate::models::ioc_utils::validate_ioc_value;
 
 use crate::enrichment::EnrichmentProvider;
 use crate::models::{DnsData, Indicator, IocType};
 
 /// DNS enrichment provider
 pub struct DnsProvider {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
 }
 
 impl DnsProvider {
-    /// Create a new DNS provider
+    /// Create a new DNS provider using the system resolver configuration.
     pub async fn new() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        );
-
+        let mut opts = ResolverOpts::default();
+        opts.timeout = Duration::from_secs(3);
+        opts.attempts = 1;
+        let resolver = TokioResolver::builder_tokio()
+            .context("failed to read system DNS configuration")?
+            .with_options(opts)
+            .build()
+            .context("failed to build the system DNS resolver")?;
         Ok(Self { resolver })
     }
 
@@ -41,25 +49,33 @@ impl DnsProvider {
 
         // MX records
         if let Ok(response) = self.resolver.mx_lookup(domain).await {
-            for record in response.iter() {
-                data.mx_records.push(record.exchange().to_string());
+            for record in response.answers() {
+                if let RData::MX(ref mx) = record.data {
+                    data.mx_records.push(mx.exchange.to_string());
+                }
             }
         }
 
         // TXT records
         if let Ok(response) = self.resolver.txt_lookup(domain).await {
-            for record in response.iter() {
-                let txt: String = record.iter()
-                    .map(|d| String::from_utf8_lossy(d).to_string())
-                    .collect();
-                data.txt_records.push(txt);
+            for record in response.answers() {
+                if let RData::TXT(ref txt) = record.data {
+                    let text: String = txt
+                        .txt_data
+                        .iter()
+                        .map(|d| String::from_utf8_lossy(d).to_string())
+                        .collect();
+                    data.txt_records.push(text);
+                }
             }
         }
 
         // NS records
         if let Ok(response) = self.resolver.ns_lookup(domain).await {
-            for record in response.iter() {
-                data.ns_records.push(record.to_string());
+            for record in response.answers() {
+                if let RData::NS(ref ns) = record.data {
+                    data.ns_records.push(ns.to_string());
+                }
             }
         }
 
@@ -72,8 +88,10 @@ impl DnsProvider {
         let mut results = vec![];
 
         if let Ok(response) = self.resolver.reverse_lookup(ip_addr).await {
-            for name in response.iter() {
-                results.push(name.to_string());
+            for record in response.answers() {
+                if let RData::PTR(ref name) = record.data {
+                    results.push(name.to_string());
+                }
             }
         }
 
@@ -96,14 +114,16 @@ impl EnrichmentProvider for DnsProvider {
     }
 
     async fn enrich(&self, indicator: &Indicator) -> Result<Option<Value>> {
+        validate_ioc_value(&indicator.value, Some(&indicator.ioc_type))
+            .map_err(|msg| anyhow::anyhow!(msg))?;
         match indicator.ioc_type {
             IocType::Domain => {
                 let data = self.lookup(&indicator.value).await?;
-                
+
                 // Only return if we got some data
-                if data.a_records.is_empty() 
-                    && data.mx_records.is_empty() 
-                    && data.ns_records.is_empty() 
+                if data.a_records.is_empty()
+                    && data.mx_records.is_empty()
+                    && data.ns_records.is_empty()
                 {
                     return Ok(None);
                 }
@@ -119,7 +139,7 @@ impl EnrichmentProvider for DnsProvider {
             }
             IocType::Ip => {
                 let ptr_records = self.reverse_lookup(&indicator.value).await?;
-                
+
                 if ptr_records.is_empty() {
                     return Ok(None);
                 }

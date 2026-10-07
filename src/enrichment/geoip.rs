@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use maxminddb::{geoip2, Reader};
-use serde_json::{json, Value};
+use maxminddb::{Reader, geoip2};
+use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,40 +18,17 @@ pub struct GeoIpProvider {
 }
 
 impl GeoIpProvider {
-    /// Create a new GeoIP provider
-    pub fn new(city_db_path: Option<&Path>, asn_db_path: Option<&Path>) -> Result<Self> {
-        let city_reader = if let Some(path) = city_db_path {
-            if path.exists() {
-                Some(Arc::new(
-                    Reader::open_readfile(path)
-                        .context("Failed to open GeoIP city database")?
-                ))
-            } else {
-                tracing::warn!("GeoIP city database not found at {:?}", path);
-                None
-            }
-        } else {
-            None
-        };
+    /// Open whichever databases exist. Missing or unreadable files disable that
+    /// lookup and leave the provider in place so enrichment can continue.
+    pub fn new(city_db_path: Option<&Path>, asn_db_path: Option<&Path>) -> Self {
+        Self {
+            city_reader: city_db_path.and_then(open_reader),
+            asn_reader: asn_db_path.and_then(open_reader),
+        }
+    }
 
-        let asn_reader = if let Some(path) = asn_db_path {
-            if path.exists() {
-                Some(Arc::new(
-                    Reader::open_readfile(path)
-                        .context("Failed to open GeoIP ASN database")?
-                ))
-            } else {
-                tracing::warn!("GeoIP ASN database not found at {:?}", path);
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok(Self {
-            city_reader,
-            asn_reader,
-        })
+    pub fn is_available(&self) -> bool {
+        self.city_reader.is_some() || self.asn_reader.is_some()
     }
 
     /// Lookup GeoIP data for an IP address
@@ -59,44 +36,43 @@ impl GeoIpProvider {
         let ip_addr: IpAddr = ip.parse().context("Invalid IP address")?;
         let mut data = GeoIpData::default();
 
-        // City lookup
-        if let Some(ref reader) = self.city_reader {
-            if let Ok(city) = reader.lookup::<geoip2::City>(ip_addr) {
-                if let Some(country) = city.country {
-                    data.country_code = country.iso_code.map(|s| s.to_string());
-                    data.country_name = country.names
-                        .and_then(|n| n.get("en").map(|s| s.to_string()));
-                }
-                
-                if let Some(city_data) = city.city {
-                    data.city = city_data.names
-                        .and_then(|n| n.get("en").map(|s| s.to_string()));
-                }
-
-                if let Some(subdivisions) = city.subdivisions {
-                    if let Some(region) = subdivisions.first() {
-                        data.region = region.names
-                            .as_ref()
-                            .and_then(|n| n.get("en").map(|s| s.to_string()));
-                    }
-                }
-
-                if let Some(location) = city.location {
-                    data.latitude = location.latitude;
-                    data.longitude = location.longitude;
-                }
+        if let Some(reader) = &self.city_reader
+            && let Ok(result) = reader.lookup(ip_addr)
+            && let Ok(Some(city)) = result.decode::<geoip2::City>()
+        {
+            data.country_code = city.country.iso_code.map(str::to_string);
+            data.country_name = city.country.names.english.map(str::to_string);
+            data.city = city.city.names.english.map(str::to_string);
+            if let Some(region) = city.subdivisions.first() {
+                data.region = region.names.english.map(str::to_string);
             }
+            data.latitude = city.location.latitude;
+            data.longitude = city.location.longitude;
         }
 
-        // ASN lookup
-        if let Some(ref reader) = self.asn_reader {
-            if let Ok(asn) = reader.lookup::<geoip2::Asn>(ip_addr) {
-                data.asn = asn.autonomous_system_number;
-                data.as_org = asn.autonomous_system_organization.map(|s| s.to_string());
-            }
+        if let Some(reader) = &self.asn_reader
+            && let Ok(result) = reader.lookup(ip_addr)
+            && let Ok(Some(asn)) = result.decode::<geoip2::Asn>()
+        {
+            data.asn = asn.autonomous_system_number;
+            data.as_org = asn.autonomous_system_organization.map(str::to_string);
         }
 
         Ok(data)
+    }
+}
+
+fn open_reader(path: &Path) -> Option<Arc<Reader<Vec<u8>>>> {
+    if !path.exists() {
+        tracing::warn!(path = %path.display(), "GeoIP database not found; skipping");
+        return None;
+    }
+    match Reader::open_readfile(path) {
+        Ok(reader) => Some(Arc::new(reader)),
+        Err(err) => {
+            tracing::warn!(path = %path.display(), error = %err, "GeoIP database unreadable; skipping");
+            None
+        }
     }
 }
 
@@ -120,7 +96,7 @@ impl EnrichmentProvider for GeoIpProvider {
         }
 
         let data = self.lookup(&indicator.value)?;
-        
+
         // Only return if we got some data
         if data.country_code.is_none() && data.asn.is_none() {
             return Ok(None);
@@ -140,5 +116,41 @@ impl EnrichmentProvider for GeoIpProvider {
 
     fn ttl_hours(&self) -> i64 {
         168 // 1 week - GeoIP data doesn't change often
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{IocType, Severity, Tlp};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn missing_databases_do_not_fail_enrichment() {
+        let provider = GeoIpProvider::new(
+            Some(Path::new("data/does-not-exist-city.mmdb")),
+            Some(Path::new("data/does-not-exist-asn.mmdb")),
+        );
+        assert!(!provider.is_available());
+        let now = Utc::now();
+        let indicator = Indicator {
+            id: Uuid::nil(),
+            ioc_type: IocType::Ip,
+            value: "8.8.8.8".into(),
+            severity: Severity::Low,
+            confidence: 10,
+            threat_score: 10,
+            tlp: Tlp::White,
+            first_seen: now,
+            last_seen: now,
+            expiration: None,
+            tags: vec![],
+            source_ids: vec![],
+            created_at: now,
+            updated_at: now,
+        };
+        let result = provider.enrich(&indicator).await.unwrap();
+        assert!(result.is_none());
     }
 }

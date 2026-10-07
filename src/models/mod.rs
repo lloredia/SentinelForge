@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use validator::Validate;
 
 /// Types of Indicators of Compromise
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
@@ -61,10 +60,10 @@ impl From<i32> for Severity {
 #[sqlx(type_name = "tlp", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum Tlp {
-    White,  // Public
-    Green,  // Community
-    Amber,  // Limited
-    Red,    // Restricted
+    White, // Public
+    Green, // Community
+    Amber, // Limited
+    Red,   // Restricted
 }
 
 /// Source of the IOC
@@ -72,10 +71,10 @@ pub enum Tlp {
 pub struct IocSource {
     pub id: Uuid,
     pub name: String,
-    pub source_type: String,  // internal, feed, manual
+    pub source_type: String, // internal, feed, manual
     pub url: Option<String>,
     pub api_key_required: bool,
-    pub reliability_score: i32,  // 0-100
+    pub reliability_score: i32, // 0-100
     pub enabled: bool,
     pub last_fetch: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -89,8 +88,8 @@ pub struct Indicator {
     pub ioc_type: IocType,
     pub value: String,
     pub severity: Severity,
-    pub confidence: i32,         // 0-100
-    pub threat_score: i32,       // 0-100 composite score
+    pub confidence: i32,   // 0-100
+    pub threat_score: i32, // 0-100 composite score
     pub tlp: Tlp,
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
@@ -106,7 +105,7 @@ pub struct Indicator {
 pub struct Enrichment {
     pub id: Uuid,
     pub indicator_id: Uuid,
-    pub enrichment_type: String,  // geoip, whois, dns, virustotal, etc.
+    pub enrichment_type: String, // geoip, whois, dns, virustotal, etc.
     pub data: serde_json::Value,
     pub provider: String,
     pub fetched_at: DateTime<Utc>,
@@ -165,11 +164,10 @@ pub struct Sighting {
 }
 
 /// API request to create/update an IOC
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIndicatorRequest {
-    #[validate(length(min = 1, max = 2048))]
     pub value: String,
-    pub ioc_type: Option<IocType>,  // Auto-detect if not provided
+    pub ioc_type: Option<IocType>, // Auto-detect if not provided
     pub severity: Option<Severity>,
     pub confidence: Option<i32>,
     pub tlp: Option<Tlp>,
@@ -256,3 +254,5 @@ pub struct DashboardStats {
     pub recent_sightings: i64,
 }
 pub mod ioc_utils;
+
+pub use ioc_utils::InputError;

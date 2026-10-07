@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sentinelforge
+          POSTGRES_PASSWORD: sentinelforge_ci
+          POSTGRES_DB: sentinelforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sentinelforge -d sentinelforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.0"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: test
+        run: cargo test --locked
+        env:
+          DATABASE_URL: postgres://sentinelforge:sentinelforge_ci@127.0.0.1:5432/sentinelforge
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: cargo audit
+        run: cargo audit
+      - name: cargo deny
+        run: cargo deny check
+
+  ui:
+    name: UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentinelforge-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sentinelforge-ui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          tags: sentinelforge-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build UI image
+        uses: docker/build-push-action@v6
+        with:
+          context: sentinelforge-ui
+          file: sentinelforge-ui/Dockerfile
+          push: false
+          load: true
+          tags: sentinelforge-ui:ci
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
+      - name: Trivy API image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: sentinelforge-api:ci
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+      - name: Trivy UI image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: sentinelforge-ui:ci
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
