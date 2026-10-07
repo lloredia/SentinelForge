@@ -1,10 +1,15 @@
 //! VirusTotal enrichment provider
 
+use std::net::IpAddr;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+
+use crate::http_util::{external_client, redact};
 
 use crate::enrichment::EnrichmentProvider;
 use crate::models::{Indicator, IocType};
@@ -13,6 +18,7 @@ const VT_API_URL: &str = "https://www.virustotal.com/api/v3";
 
 /// VirusTotal analysis stats
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct VtAnalysisStats {
     malicious: i32,
     suspicious: i32,
@@ -23,6 +29,7 @@ struct VtAnalysisStats {
 
 /// VirusTotal attributes
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct VtAttributes {
     last_analysis_stats: Option<VtAnalysisStats>,
     last_analysis_date: Option<i64>,
@@ -67,28 +74,31 @@ pub struct VirusTotalProvider {
 
 impl VirusTotalProvider {
     /// Create a new VirusTotal provider
-    pub fn new(api_key: String) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self { client, api_key }
+    pub fn new(api_key: String) -> Result<Self> {
+        let client = external_client(Duration::from_secs(10))?;
+        Ok(Self { client, api_key })
     }
 
     /// Check an IP address
     pub async fn check_ip(&self, ip: &str) -> Result<Value> {
-        self.fetch(&format!("{}/ip_addresses/{}", VT_API_URL, ip)).await
+        let ip: IpAddr = ip.parse().context("invalid ip for VirusTotal lookup")?;
+        self.fetch(&format!("{VT_API_URL}/ip_addresses/{ip}")).await
     }
 
     /// Check a domain
     pub async fn check_domain(&self, domain: &str) -> Result<Value> {
-        self.fetch(&format!("{}/domains/{}", VT_API_URL, domain)).await
+        if !is_safe_path_token(domain) {
+            anyhow::bail!("invalid domain for VirusTotal lookup");
+        }
+        self.fetch(&format!("{VT_API_URL}/domains/{domain}")).await
     }
 
     /// Check a file hash
     pub async fn check_hash(&self, hash: &str) -> Result<Value> {
-        self.fetch(&format!("{}/files/{}", VT_API_URL, hash)).await
+        if !is_safe_path_token(hash) {
+            anyhow::bail!("invalid hash for VirusTotal lookup");
+        }
+        self.fetch(&format!("{VT_API_URL}/files/{hash}")).await
     }
 
     /// Check a URL (URL must be base64 encoded without padding)
@@ -99,7 +109,8 @@ impl VirusTotalProvider {
     }
 
     async fn fetch(&self, url: &str) -> Result<Value> {
-        let response = self.client
+        let response = self
+            .client
             .get(url)
             .header("x-apikey", &self.api_key)
             .send()
@@ -111,9 +122,7 @@ impl VirusTotalProvider {
         }
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("VirusTotal API error: {} - {}", status, body);
+            anyhow::bail!("VirusTotal API error: status {}", response.status());
         }
 
         let data: VtResponse = response
@@ -122,7 +131,7 @@ impl VirusTotalProvider {
             .context("Failed to parse VirusTotal response")?;
 
         let attrs = &data.data.attributes;
-        
+
         let mut result = json!({
             "found": true,
             "reputation": attrs.reputation,
@@ -135,7 +144,7 @@ impl VirusTotalProvider {
                 "suspicious": stats.suspicious,
                 "harmless": stats.harmless,
                 "undetected": stats.undetected,
-                "detection_ratio": format!("{}/{}", 
+                "detection_ratio": format!("{}/{}",
                     stats.malicious + stats.suspicious,
                     stats.malicious + stats.suspicious + stats.harmless + stats.undetected
                 ),
@@ -198,13 +207,15 @@ impl EnrichmentProvider for VirusTotalProvider {
     }
 
     async fn enrich(&self, indicator: &Indicator) -> Result<Option<Value>> {
-        let result = match indicator.ioc_type {
-            IocType::Ip => self.check_ip(&indicator.value).await?,
-            IocType::Domain => self.check_domain(&indicator.value).await?,
-            IocType::Hash => self.check_hash(&indicator.value).await?,
-            IocType::Url => self.check_url(&indicator.value).await?,
-            _ => return Ok(None),
+        let fetched = match indicator.ioc_type {
+            IocType::Ip => self.check_ip(&indicator.value).await,
+            IocType::Domain => self.check_domain(&indicator.value).await,
+            IocType::Hash => self.check_hash(&indicator.value).await,
+            IocType::Url => self.check_url(&indicator.value).await,
+            IocType::Email | IocType::Cve => return Ok(None),
         };
+        let result =
+            fetched.map_err(|err| anyhow::anyhow!(redact(&err.to_string(), &[&self.api_key])))?;
 
         // Check if we got meaningful data
         if result.get("found") == Some(&json!(false)) {
@@ -217,4 +228,12 @@ impl EnrichmentProvider for VirusTotalProvider {
     fn ttl_hours(&self) -> i64 {
         12 // Check reputation frequently
     }
+}
+
+fn is_safe_path_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }

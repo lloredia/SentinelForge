@@ -1,0 +1,13 @@
+.git
+.github
+target
+sentinelforge-ui
+data
+assets
+*.mmdb
+*.tar.gz
+.env
+.env.*
+!.env.example
+tests
+scripts

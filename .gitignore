@@ -2,28 +2,50 @@
 /target/
 debug/
 release/
+**/*.rs.bk
 
-# Database files
+# GeoIP databases and MaxMind archives (not redistributed)
 *.mmdb
+*.tar.gz
 data/GeoLite2-*/
+assets/GeoLite2*
 
 # Environment
 .env
 .env.local
+.env.*.local
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
 logs/
 
-# Dependencies (React)
+# React frontend
 sentinelforge-ui/node_modules/
 sentinelforge-ui/build/
+sentinelforge-ui/dist/
+sentinelforge-ui/.env
+sentinelforge-ui/.env.local
+sentinelforge-ui/npm-debug.log*
+sentinelforge-ui/yarn-debug.log*
+sentinelforge-ui/yarn-error.log*
+
+# Test coverage
+*.profraw
+coverage/
+lcov.info
+
+# Temp files
+*.tmp
+*.temp

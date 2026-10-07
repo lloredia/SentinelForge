@@ -6,114 +6,92 @@
   <strong>Forge Your Defense • Stay Vigilant</strong>
 </p>
 
-
-<!-- Repo Stats -->
 <p align="center">
-  <img src="https://img.shields.io/github/last-commit/lloredia/SentinelForge?style=plastic" />
-  <img src="https://img.shields.io/github/languages/top/lloredia/SentinelForge?style=plastic" />
-  <img src="https://img.shields.io/github/languages/count/lloredia/SentinelForge?style=plastic" />
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=plastic" />
-</p>
-<!-- Tech Stack -->
-<p align="center">
-  <img src="https://img.shields.io/badge/Rust-black?logo=rust&logoColor=white&style=plastic" />
-  <img src="https://img.shields.io/badge/Axum-black?logo=rust&logoColor=white&style=plastic" />
-  <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB&style=plastic" />
-  <img src="https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white&style=plastic" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white&style=plastic" />
-  <img src="https://img.shields.io/badge/JSON-000000?logo=json&logoColor=white&style=plastic" />
-  <img src="https://img.shields.io/badge/SQL-003B57?logo=databricks&logoColor=white&style=plastic" />
+  <img src="https://github.com/lloredia/SentinelForge/actions/workflows/ci.yml/badge.svg?style=plastic" alt="CI" />
+  <img src="https://img.shields.io/github/last-commit/lloredia/SentinelForge?style=plastic" alt="last commit" />
+  <img src="https://img.shields.io/github/languages/top/lloredia/SentinelForge?style=plastic" alt="top language" />
+  <img src="https://img.shields.io/github/languages/count/lloredia/SentinelForge?style=plastic" alt="language count" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=plastic" alt="MIT license" />
 </p>
 
-<!-- Language Breakdown -->
 <p align="center">
-  <img src="https://img.shields.io/badge/Rust-64.8-black?style=plastic&logo=rust&logoColor=white" />
-  <img src="https://img.shields.io/badge/JavaScript-28.5-F7DF1E?style=plastic&logo=javascript&logoColor=black" />
-  <img src="https://img.shields.io/badge/PL%2FpgSQL-3.7-336791?style=plastic&logo=postgresql&logoColor=white" />
-  <img src="https://img.shields.io/badge/HTML-1.4-E34F26?style=plastic&logo=html5&logoColor=white" />
-  <img src="https://img.shields.io/badge/Dockerfile-1.3-2496ED?style=plastic&logo=docker&logoColor=white" />
-  <img src="https://img.shields.io/badge/CSS-0.3-1572B6?style=plastic&logo=css3&logoColor=white" />
+  <img src="https://img.shields.io/badge/Rust-black?logo=rust&logoColor=white&style=plastic" alt="Rust" />
+  <img src="https://img.shields.io/badge/Axum-black?logo=rust&logoColor=white&style=plastic" alt="Axum" />
+  <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB&style=plastic" alt="React" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white&style=plastic" alt="PostgreSQL" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white&style=plastic" alt="Docker" />
 </p>
-
-
 
 ---
 
-A modern, high-performance **Threat Intelligence Platform** built with Rust and React. Collect, enrich, and analyze Indicators of Compromise (IOCs) with automatic type detection and real-time enrichment.
+Threat intelligence service for collecting, enriching, and searching indicators of compromise. The API is Rust (Axum, sqlx, PostgreSQL). The dashboard is React (Vite). Collectors cover AlienVault OTX, Emerging Threats, and HoneyTrap. Enrichment covers VirusTotal, AbuseIPDB, GeoIP, DNS, and WHOIS.
 
 ![SentinelForge Dashboard](assets/screenshot.png)
 
-## ✨ Features
+## Features
 
-| Feature | Description |
-|---------|-------------|
-| 🎯 **Multi-type IOC Support** | IPs, domains, URLs, hashes, emails, and CVEs |
-| 🔍 **Auto-detection** | Automatically identifies IOC type from input |
-| 🌍 **Real-time Enrichment** | GeoIP, DNS, VirusTotal, AbuseIPDB integration |
-| 🖥️ **Cyberpunk Dashboard** | Beautiful React UI with terminal aesthetics |
-| 🔌 **RESTful API** | Full-featured API for automation and integration |
-| 🗄️ **PostgreSQL Backend** | Reliable storage with full-text search |
-| 🏷️ **Tagging & Severity** | Organize and prioritize threats |
-| 🚦 **TLP Support** | Traffic Light Protocol for sharing classification |
+| Feature | What it does |
+|---------|----------------|
+| IOC types | IP, CIDR, domain, URL, MD5/SHA1/SHA256, email, CVE |
+| Search | Paginated `ILIKE` filters (type, severity, confidence, score, tags, source). Wildcards in the query are escaped. |
+| Enrichment | GeoIP, DNS, WHOIS, VirusTotal, AbuseIPDB. Missing GeoIP files and missing vendor keys are skipped. |
+| Dashboard | Cyberpunk React UI: stats, filters, IOC table, detail panel, submit form |
+| API auth | Write routes require an API key. Read auth is optional. |
+| Controls | CORS allowlist, body size limit, per-IP rate limit, request timeout |
 
-## 🏗️ Architecture
+Redis is started by Compose for later use. The API does not talk to it. Feed collectors are implemented as libraries. `POST /api/v1/feeds/refresh` is authenticated and currently returns a stub; nothing schedules collection at startup.
+
+## Architecture
 
 ```mermaid
 flowchart TB
     subgraph Clients
-        UI[React Dashboard<br/>:3000]
+        UI[React Dashboard<br/>127.0.0.1:3000]
         API_CLIENT[API Clients<br/>curl/scripts]
-        HONEYPOT[HoneyTrap<br/>Honeypot]
+        HONEYPOT[HoneyTrap<br/>collector]
     end
 
     subgraph SentinelForge Backend
-        API[Axum REST API<br/>:8080]
-        
+        API[Axum REST API<br/>127.0.0.1:8080]
+
         subgraph Enrichment Engine
             GEOIP[GeoIP<br/>MaxMind]
             DNS[DNS<br/>Resolver]
+            WHOIS[WHOIS<br/>fixed TLD servers]
             VT[VirusTotal<br/>API]
             ABUSE[AbuseIPDB<br/>API]
         end
-        
+
         subgraph Storage Layer
             REPO[ThreatIntel<br/>Repository]
             PG[(PostgreSQL<br/>Database)]
         end
     end
 
-    subgraph External Services
-        MAXMIND[MaxMind<br/>GeoLite2]
-        VT_API[VirusTotal<br/>API]
-        ABUSE_API[AbuseIPDB<br/>API]
-    end
+    UI -->|HTTP + X-API-Key| API
+    API_CLIENT -->|HTTP + X-API-Key| API
+    HONEYPOT -.->|not scheduled| API
 
-    UI -->|HTTP| API
-    API_CLIENT -->|HTTP| API
-    HONEYPOT -->|HTTP| API
-    
     API --> REPO
     REPO --> PG
-    
+
     API --> GEOIP
     API --> DNS
+    API --> WHOIS
     API --> VT
     API --> ABUSE
-    
-    GEOIP -.->|mmdb| MAXMIND
-    VT -.->|REST| VT_API
-    ABUSE -.->|REST| ABUSE_API
 
     style UI fill:#00ffaa,stroke:#000,color:#000
     style API fill:#ff6b00,stroke:#000,color:#fff
     style PG fill:#316192,stroke:#000,color:#fff
     style GEOIP fill:#ffd000,stroke:#000,color:#000
     style DNS fill:#ffd000,stroke:#000,color:#000
+    style WHOIS fill:#ffd000,stroke:#000,color:#000
     style VT fill:#ffd000,stroke:#000,color:#000
     style ABUSE fill:#ffd000,stroke:#000,color:#000
 ```
 
-## 🔄 Data Flow
+## Data flow
 
 ```mermaid
 sequenceDiagram
@@ -123,210 +101,197 @@ sequenceDiagram
     participant E as Enrichment
     participant DB as PostgreSQL
 
-    C->>A: POST /api/v1/indicators<br/>{"value": "8.8.8.8"}
-    A->>D: Detect IOC Type
+    C->>A: POST /api/v1/indicators<br/>X-API-Key + {"value": "8.8.8.8"}
+    A->>D: Detect and validate IOC
     D-->>A: Type: IP
-    A->>DB: Upsert Indicator
-    DB-->>A: Indicator Created
-    
-    par Async Enrichment
-        A->>E: Enrich (GeoIP)
-        E-->>DB: Save: Country, ASN
-        A->>E: Enrich (DNS)
-        E-->>DB: Save: PTR Record
-        A->>E: Enrich (VirusTotal)
-        E-->>DB: Save: Reputation
-    end
-    
-    A-->>C: 201 Created<br/>{indicator + id}
+    A->>DB: Upsert indicator
+    DB-->>A: Indicator created
+    A->>E: Enrich (GeoIP, DNS, optional vendors)
+    E-->>DB: Store enrichment rows
+    A-->>C: 201 Created
 ```
 
-## 🚀 Quick Start
+Enrichment runs in the request that asks for it (`POST /api/v1/indicators/:id/enrich`), not as a background job after create.
 
-### Prerequisites
+## Quick start
 
-- Rust 1.70+
-- PostgreSQL 14+
-- Node.js 18+ (for frontend)
-
-### Backend Setup
+Requirements: Docker with Compose, or Rust 1.99 (see `rust-toolchain.toml`), PostgreSQL 16, and Node.js 22 for a local UI build.
 
 ```bash
-# Clone the repository
-git clone https://github.com/lloredia/SentinelForge.git
-cd SentinelForge
-
-# Set up database
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sentinelforge"
-createdb sentinelforge
-
-# Run migrations
-cargo install sqlx-cli --no-default-features --features postgres
-sqlx migrate run
-
-# Build and run
-cargo build --release
-./target/release/sentinelforge
+cp .env.example .env
 ```
 
-### Frontend Setup
+Edit `.env`:
+
+- Set `POSTGRES_PASSWORD` to a URL-safe value (letters, digits, `.`, `_`, `-`). Compose embeds it in `DATABASE_URL`.
+- Set `API_KEYS` to at least one random key, 16 characters or longer.
+- Set `VITE_API_KEY` to that same key if the dashboard should submit IOCs. The key is compiled into the browser bundle.
+
+GeoIP databases are optional. Enrichment continues without them.
+
+```bash
+export MAXMIND_LICENSE_KEY=your-maxmind-key
+./scripts/download-geoip.sh
+```
+
+Start the stack. Postgres, Redis, the API, and the UI come up. Adminer stays off unless you pass `--profile debug`. Published ports bind to `127.0.0.1` only.
+
+```bash
+docker compose up --build
+```
+
+- API: `http://127.0.0.1:8080/health`
+- UI: `http://127.0.0.1:3000`
+- Adminer (debug only): `docker compose --profile debug up adminer` then `http://127.0.0.1:8081`
+
+### Without Docker
+
+```bash
+# Postgres already running, .env filled in
+set -a && source .env && set +a
+cargo run -- --migrate
+```
+
+The process listens on `127.0.0.1:8080` unless `HOST` is set. The container image sets `HOST=0.0.0.0` so Compose can publish it.
 
 ```bash
 cd sentinelforge-ui
-npm install
+npm ci
 npm start
 ```
 
-The dashboard will be available at `http://localhost:3000`
+Vite serves the dashboard on port 3000.
 
-### GeoIP Setup (Optional)
+## API examples
 
-1. Sign up for a free MaxMind account: https://www.maxmind.com/en/geolite2/signup
-2. Download GeoLite2-City and GeoLite2-ASN databases
-3. Place `.mmdb` files in the `data/` directory
+Replace the key with the value from `API_KEYS`. Reads work without a key when `REQUIRE_READ_AUTH=false` (the default). Writes always require a key, sent as `X-API-Key` or `Authorization: Bearer`.
 
-## 📡 API Reference
-
-### Health Check
 ```bash
-curl http://localhost:8080/health
+curl -s http://127.0.0.1:8080/health
 ```
 
-### Create Indicator
 ```bash
-curl -X POST http://localhost:8080/api/v1/indicators \
+curl -s -X POST http://127.0.0.1:8080/api/v1/indicators \
   -H "Content-Type: application/json" \
-  -d '{"value": "8.8.8.8", "severity": "low", "tags": ["dns", "google"]}'
+  -H "X-API-Key: $API_KEY" \
+  -d '{"value": "8.8.8.8", "severity": "low", "tags": ["dns"]}'
 ```
 
-### List Indicators
 ```bash
-curl http://localhost:8080/api/v1/indicators
+curl -s "http://127.0.0.1:8080/api/v1/indicators?search=8.8.8.8&page=1&per_page=20"
 ```
 
-### Lookup by Value
 ```bash
-curl "http://localhost:8080/api/v1/lookup?value=8.8.8.8"
+curl -s "http://127.0.0.1:8080/api/v1/lookup?value=8.8.8.8"
 ```
 
-### Get Statistics
 ```bash
-curl http://localhost:8080/api/v1/stats
+curl -s http://127.0.0.1:8080/api/v1/stats
 ```
 
-### Bulk Import
 ```bash
-curl -X POST http://localhost:8080/api/v1/indicators/bulk \
+curl -s -X POST http://127.0.0.1:8080/api/v1/indicators/bulk \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "source": "threat-feed",
     "indicators": [
       {"value": "1.2.3.4", "severity": "high"},
-      {"value": "evil.com", "severity": "critical"}
+      {"value": "evil.example", "severity": "critical"}
     ]
   }'
 ```
 
-## 📋 API Endpoints
+`page` must be at least 1. `per_page` must be from 1 to 100. Bulk import accepts at most 500 indicators. Invalid IOC values return 400.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/api/v1/indicators` | List indicators (paginated) |
-| `POST` | `/api/v1/indicators` | Create indicator |
-| `GET` | `/api/v1/indicators/:id` | Get indicator by ID |
-| `DELETE` | `/api/v1/indicators/:id` | Delete indicator |
-| `POST` | `/api/v1/indicators/:id/enrich` | Trigger enrichment |
-| `POST` | `/api/v1/indicators/:id/sightings` | Add sighting |
-| `GET` | `/api/v1/lookup` | Lookup by value |
-| `GET` | `/api/v1/stats` | Dashboard statistics |
-| `POST` | `/api/v1/indicators/bulk` | Bulk import |
-| `GET` | `/api/v1/sources` | List feed sources |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/health` | no | Health check |
+| `GET` | `/api/v1/indicators` | read | Paginated search |
+| `POST` | `/api/v1/indicators` | write | Create an indicator |
+| `GET` | `/api/v1/indicators/:id` | read | Indicator, enrichments, sighting count |
+| `DELETE` | `/api/v1/indicators/:id` | write | Delete an indicator |
+| `POST` | `/api/v1/indicators/:id/enrich` | write | Run enrichment providers |
+| `POST` | `/api/v1/indicators/:id/sightings` | write | Record a sighting |
+| `GET` | `/api/v1/lookup` | read | Lookup by `value` query parameter |
+| `GET` | `/api/v1/stats` | read | Dashboard counters |
+| `POST` | `/api/v1/indicators/bulk` | write | Bulk import |
+| `GET` | `/api/v1/sources` | read | Feed sources |
+| `POST` | `/api/v1/feeds/refresh` | write | Stub. Collectors are not scheduled |
 
-## 🎯 IOC Types
+| Type | Example |
+|------|---------|
+| IP / CIDR | `8.8.8.8`, `2001:4860:4860::8888`, `10.0.0.0/8` |
+| Domain | `malicious-domain.com` |
+| URL | `https://evil.example/malware.exe` (http or https, no userinfo) |
+| Hash | 32, 40, or 64 hex characters |
+| Email | `attacker@evil.example` |
+| CVE | `CVE-2024-1234` |
 
-| Type | Example | Auto-detected |
-|------|---------|:-------------:|
-| IP | `8.8.8.8`, `2001:4860:4860::8888` | ✅ |
-| Domain | `malicious-domain.com` | ✅ |
-| URL | `https://evil.com/malware.exe` | ✅ |
-| Hash | MD5, SHA1, SHA256 | ✅ |
-| Email | `attacker@evil.com` | ✅ |
-| CVE | `CVE-2024-1234` | ✅ |
+| Provider | Needs a key | If it is missing |
+|----------|:-----------:|------------------|
+| MaxMind GeoIP | license key only to download | Lookup returns no geo fields |
+| DNS | no | Disabled if system resolv.conf cannot be read |
+| WHOIS | no | Queries a fixed public TLD server list. No referral chase |
+| VirusTotal | `VIRUSTOTAL_API_KEY` | Provider is not registered |
+| AbuseIPDB | `ABUSEIPDB_API_KEY` | Provider is not registered |
 
-## 🔌 Enrichment Providers
+## Security
 
-| Provider | Data | API Key Required |
-|----------|------|:----------------:|
-| MaxMind GeoIP | Country, City, ASN, Org | Free account |
-| DNS | PTR, A, MX records | ❌ |
-| VirusTotal | Reputation, detections | ✅ |
-| AbuseIPDB | Abuse reports, confidence | ✅ |
+- API keys come from `API_KEYS`. The server stores SHA-256 digests and compares them in constant time. Keys are not written to logs. Outbound errors are redacted before they are logged.
+- Browser origins come from `CORS_ALLOWED_ORIGINS`. The API does not send `Access-Control-Allow-Origin: *`.
+- Local default bind address is `127.0.0.1`. The container sets `HOST=0.0.0.0` and Compose publishes `127.0.0.1:8080` on the host.
+- Request bodies are capped (`BODY_LIMIT_BYTES`, default 2 MiB). Each client IP is rate limited (`RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`). Handlers time out at 30 seconds.
+- IOC values are checked for type, length, and unsafe characters before insert.
+- Outbound HTTP uses a 10 second timeout, a 5 second connect timeout, and no redirects. VirusTotal path segments are restricted to expected tokens.
+- HoneyTrap's base URL is validated before use: http or https only, no credentials, and link-local or metadata addresses are always rejected. Loopback and private addresses require `HONEYTRAP_ALLOW_PRIVATE=true`. Public feed URLs must be HTTPS and on a host allowlist.
+- WHOIS connects only to a built-in map of public TLD servers, with a short timeout and a response cap.
+- GeoLite2 databases are not in git. MaxMind's GeoLite2 EULA forbids redistributing the files. Use `scripts/download-geoip.sh` with your own `MAXMIND_LICENSE_KEY`.
+- Postgres, Redis, and Adminer are not published on `0.0.0.0`. Adminer is behind the Compose `debug` profile. The database password is read from `.env`.
 
-### Configure API Keys
+The UI key (`VITE_API_KEY`) is visible to the browser. Treat the dashboard as an operator console on localhost, or put a reverse proxy in front of it before exposing it.
 
-```bash
-export VIRUSTOTAL_API_KEY="your-api-key"
-export ABUSEIPDB_API_KEY="your-api-key"
-```
-
-## 📁 Project Structure
+## Project layout
 
 ```
 sentinelforge/
-├── src/
-│   ├── main.rs              # Application entry point
-│   ├── api/                  # REST API handlers
-│   ├── models/               # Data models & IOC utils
-│   ├── storage/              # Database operations
-│   ├── enrichment/           # Enrichment providers
-│   │   ├── geoip.rs          # MaxMind GeoIP
-│   │   ├── dns.rs            # DNS lookups
-│   │   ├── virustotal.rs     # VirusTotal API
-│   │   ├── abuseipdb.rs      # AbuseIPDB API
-│   │   └── whois.rs          # WHOIS lookups
-│   └── collectors/           # Threat feed collectors
-├── migrations/               # Database migrations
-├── data/                     # GeoIP databases
-├── sentinelforge-ui/         # React dashboard
-└── Cargo.toml
+├── src/                  # API, auth, storage, enrichment, collectors
+├── migrations/
+├── tests/                # Postgres integration tests
+├── docker/Dockerfile     # multi-stage, distroless, non-root
+├── scripts/download-geoip.sh
+├── sentinelforge-ui/     # Vite + React dashboard
+├── docker-compose.yml
+└── .github/workflows/ci.yml
 ```
 
-## 🐳 Docker Deployment
+## Development checks
 
 ```bash
-# Build
-docker build -t sentinelforge .
-
-# Run with PostgreSQL
-docker-compose up -d
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+DATABASE_URL=postgres://sentinelforge:sentinelforge_test@127.0.0.1:5432/sentinelforge cargo test
+cargo audit
+cargo deny check
+cd sentinelforge-ui && npm ci && npm run lint && npm test && npm run build
 ```
 
-## 🗺️ Roadmap
+CI runs those checks, builds the API and UI images, scans them with Trivy (high and critical, ignoring unfixed OS findings), and runs gitleaks.
 
-- [ ] STIX/TAXII integration
-- [ ] Automated threat feed ingestion
-- [ ] Alert notifications (email, Slack, webhooks)
+## Roadmap
+
+- [x] API key authentication for writes, optional for reads
+- [x] Per-IP rate limiting and request body limits
+- [ ] Scheduled threat-feed ingestion (OTX, Emerging Threats, HoneyTrap)
+- [ ] STIX/TAXII import and export
+- [ ] Alerting (email, Slack, webhooks)
 - [ ] MITRE ATT&CK mapping
-- [ ] API rate limiting
-- [ ] User authentication
-- [ ] HoneyTrap honeypot integration
 
-## 🤝 Contributing
+## License
 
-Contributions are welcome! Please open an issue or submit a pull request.
+MIT. See [LICENSE](LICENSE).
 
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🙏 Acknowledgments
-
-- [MaxMind](https://www.maxmind.com/) for GeoIP databases
-- [Axum](https://github.com/tokio-rs/axum) for the web framework
-- [SQLx](https://github.com/launchbadge/sqlx) for async database operations
-
----
+GeoLite2 data, if you download it, stays under the [MaxMind GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula) and is not part of this MIT license.
 
 <p align="center">
   <img src="assets/sentinelforge-logo-small.png" alt="SentinelForge" width="100"/>

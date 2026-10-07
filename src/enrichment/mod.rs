@@ -1,10 +1,10 @@
 //! Enrichment services for threat intelligence
 
-pub mod geoip;
-pub mod whois;
-pub mod dns;
 pub mod abuseipdb;
+pub mod dns;
+pub mod geoip;
 pub mod virustotal;
+pub mod whois;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,20 +13,21 @@ use serde_json::Value;
 use crate::models::{Indicator, IocType};
 
 /// Trait for enrichment providers
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait EnrichmentProvider: Send + Sync {
     /// Provider name
     fn name(&self) -> &'static str;
-    
+
     /// Enrichment type (geoip, whois, dns, reputation, etc.)
     fn enrichment_type(&self) -> &'static str;
-    
+
     /// Check if this provider can enrich the given IOC type
     fn supports(&self, ioc_type: &IocType) -> bool;
-    
+
     /// Perform enrichment
     async fn enrich(&self, indicator: &Indicator) -> Result<Option<Value>>;
-    
+
     /// TTL for cached results in hours
     fn ttl_hours(&self) -> i64 {
         24

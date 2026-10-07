@@ -8,10 +8,12 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::collectors::FeedCollector;
+use crate::http_util::{external_client, validate_collector_url};
 use crate::models::{CreateIndicatorRequest, IocType, Severity, Tlp};
 
 /// HoneyTrap event from the honeypot
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct HoneytrapEvent {
     session_id: String,
     protocol: String,
@@ -23,12 +25,14 @@ struct HoneytrapEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct HoneytrapSource {
     ip: String,
     port: u16,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct HoneytrapCredentials {
     username: String,
     password: String,
@@ -44,21 +48,22 @@ pub struct HoneytrapCollector {
     client: Client,
     api_url: String,
     api_key: Option<String>,
+    allow_private: bool,
 }
 
 impl HoneytrapCollector {
-    /// Create a new HoneyTrap collector
-    pub fn new(api_url: String, api_key: Option<String>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self {
+    /// Create a new HoneyTrap collector.
+    ///
+    /// `allow_private` permits loopback and RFC1918 hosts (typical for a local
+    /// honeypot). Link-local and cloud metadata addresses are always rejected.
+    pub fn new(api_url: String, api_key: Option<String>, allow_private: bool) -> Result<Self> {
+        let client = external_client(Duration::from_secs(10))?;
+        Ok(Self {
             client,
             api_url,
             api_key,
-        }
+            allow_private,
+        })
     }
 
     /// Parse events file directly (for local deployment)
@@ -99,7 +104,7 @@ impl HoneytrapCollector {
                 // Add command-based tags
                 if let Some(ref cmd) = event.command {
                     tags.push("executed_commands".to_string());
-                    
+
                     // Detect suspicious commands
                     let cmd_lower = cmd.command.to_lowercase();
                     if cmd_lower.contains("wget") || cmd_lower.contains("curl") {
@@ -145,12 +150,18 @@ impl FeedCollector for HoneytrapCollector {
     }
 
     async fn fetch(&self) -> Result<Vec<CreateIndicatorRequest>> {
-        // If we have an API URL, fetch from the API
         if !self.api_url.is_empty() {
-            let mut request = self.client.get(&format!("{}/api/events", self.api_url));
-            
+            let base = validate_collector_url(&self.api_url, self.allow_private)
+                .await
+                .map_err(|err| anyhow::anyhow!("refusing HoneyTrap URL: {err}"))?;
+            let mut endpoint = base;
+            endpoint.set_path("/api/events");
+            endpoint.set_query(None);
+            endpoint.set_fragment(None);
+
+            let mut request = self.client.get(endpoint);
             if let Some(ref key) = self.api_key {
-                request = request.header("Authorization", format!("Bearer {}", key));
+                request = request.header("Authorization", format!("Bearer {key}"));
             }
 
             let response = request
@@ -159,7 +170,7 @@ impl FeedCollector for HoneytrapCollector {
                 .context("Failed to fetch from HoneyTrap API")?;
 
             if !response.status().is_success() {
-                anyhow::bail!("HoneyTrap API error: {}", response.status());
+                anyhow::bail!("HoneyTrap API error: status {}", response.status());
             }
 
             let events: Vec<HoneytrapEvent> = response

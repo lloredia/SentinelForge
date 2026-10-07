@@ -2,16 +2,17 @@
 
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
-use crate::models::ioc_utils::{detect_ioc_type, normalize_ioc};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
-use crate::models::{
-    CreateIndicatorRequest, DashboardStats, Enrichment, Indicator, IndicatorFilter,
-    IocSource, IocType, PaginatedResponse, Severity, Sighting, Tlp,
+use crate::models::ioc_utils::{
+    InputError, detect_ioc_type, normalize_filter, normalize_ioc, validate_indicator_request,
 };
-// use crate::models::ioc_utils::{detect_ioc_type, normalize_ioc};
+use crate::models::{
+    CreateIndicatorRequest, DashboardStats, Enrichment, Indicator, IndicatorFilter, IocSource,
+    PaginatedResponse, Severity, Sighting, Tlp,
+};
 
 /// Database repository for threat intelligence
 #[derive(Clone)]
@@ -31,6 +32,11 @@ impl ThreatIntelRepo {
         Ok(Self { pool })
     }
 
+    /// Wrap an existing pool. Used by tests and embedders that manage the pool.
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     /// Get the connection pool
     pub fn pool(&self) -> &PgPool {
         &self.pool
@@ -48,14 +54,26 @@ impl ThreatIntelRepo {
     // ==================== Indicators ====================
 
     /// Create or update an indicator
-    pub async fn upsert_indicator(&self, req: &CreateIndicatorRequest, source_id: Option<Uuid>) -> Result<Indicator> {
-        let ioc_type = req.ioc_type.clone().or_else(|| detect_ioc_type(&req.value))
-            .ok_or_else(|| anyhow::anyhow!("Could not detect IOC type for: {}", req.value))?;
-        
+    pub async fn upsert_indicator(
+        &self,
+        req: &CreateIndicatorRequest,
+        source_id: Option<Uuid>,
+    ) -> Result<Indicator> {
+        validate_indicator_request(req).map_err(|msg| anyhow::Error::new(InputError(msg)))?;
+        let ioc_type = req
+            .ioc_type
+            .clone()
+            .or_else(|| detect_ioc_type(&req.value))
+            .ok_or_else(|| {
+                anyhow::Error::new(InputError("could not detect IOC type".to_string()))
+            })?;
+
         let normalized_value = normalize_ioc(&req.value, &ioc_type);
         let now = Utc::now();
-        let expiration = req.expiration_days.map(|days| now + Duration::days(days as i64));
-        
+        let expiration = req
+            .expiration_days
+            .map(|days| now + Duration::days(days as i64));
+
         let indicator = sqlx::query_as::<_, Indicator>(
             r#"
             INSERT INTO indicators (
@@ -82,8 +100,8 @@ impl ThreatIntelRepo {
         .bind(req.tlp.clone().unwrap_or(Tlp::Amber))
         .bind(now)
         .bind(expiration)
-        .bind(&req.tags.clone().unwrap_or_default())
-        .bind(&source_id.map(|id| vec![id]).unwrap_or_default())
+        .bind(req.tags.clone().unwrap_or_default())
+        .bind(source_id.map(|id| vec![id]).unwrap_or_default())
         .fetch_one(&self.pool)
         .await
         .context("Failed to upsert indicator")?;
@@ -93,13 +111,11 @@ impl ThreatIntelRepo {
 
     /// Get indicator by ID
     pub async fn get_indicator(&self, id: Uuid) -> Result<Option<Indicator>> {
-        let indicator = sqlx::query_as::<_, Indicator>(
-            "SELECT * FROM indicators WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to fetch indicator")?;
+        let indicator = sqlx::query_as::<_, Indicator>("SELECT * FROM indicators WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to fetch indicator")?;
 
         Ok(indicator)
     }
@@ -110,7 +126,7 @@ impl ThreatIntelRepo {
         if let Some(ioc_type) = detect_ioc_type(value) {
             let normalized = normalize_ioc(value, &ioc_type);
             let indicator = sqlx::query_as::<_, Indicator>(
-                "SELECT * FROM indicators WHERE ioc_type = $1 AND value = $2"
+                "SELECT * FROM indicators WHERE ioc_type = $1 AND value = $2",
             )
             .bind(&ioc_type)
             .bind(&normalized)
@@ -122,69 +138,72 @@ impl ThreatIntelRepo {
         }
 
         // Fallback to direct search
-        let indicator = sqlx::query_as::<_, Indicator>(
-            "SELECT * FROM indicators WHERE value = $1"
-        )
-        .bind(value)
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to fetch indicator by value")?;
+        let indicator = sqlx::query_as::<_, Indicator>("SELECT * FROM indicators WHERE value = $1")
+            .bind(value)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to fetch indicator by value")?;
 
         Ok(indicator)
     }
 
-    /// Search indicators with filters
-    pub async fn search_indicators(&self, filter: &IndicatorFilter) -> Result<PaginatedResponse<Indicator>> {
-        let page = filter.page.unwrap_or(1).max(1);
-        let per_page = filter.per_page.unwrap_or(50).min(1000);
-        let offset = (page - 1) * per_page;
+    /// Search indicators with filters.
+    ///
+    /// Both the page query and the count query bind every predicate through
+    /// `QueryBuilder`, so omitted filters do not leave unused placeholders.
+    pub async fn search_indicators(
+        &self,
+        filter: &IndicatorFilter,
+    ) -> Result<PaginatedResponse<Indicator>> {
+        let normalized =
+            normalize_filter(filter).map_err(|msg| anyhow::Error::new(InputError(msg)))?;
 
-        // Build dynamic query
-        let mut conditions = vec!["1=1".to_string()];
-        
-        if filter.ioc_type.is_some() {
-            conditions.push("ioc_type = $1".to_string());
-        }
-        if filter.severity.is_some() {
-            conditions.push("severity = $2".to_string());
-        }
-        if filter.min_confidence.is_some() {
-            conditions.push("confidence >= $3".to_string());
-        }
-        if filter.min_threat_score.is_some() {
-            conditions.push("threat_score >= $4".to_string());
-        }
-        if filter.search.is_some() {
-            conditions.push("value ILIKE $5".to_string());
-        }
+        let mut data: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM indicators WHERE 1=1");
+        push_indicator_filters(&mut data, filter, normalized.search_pattern.as_deref());
+        data.push(" ORDER BY last_seen DESC, id DESC LIMIT ");
+        data.push_bind(normalized.per_page);
+        data.push(" OFFSET ");
+        data.push_bind(normalized.offset);
 
-        let where_clause = conditions.join(" AND ");
+        let indicators = data
+            .build_query_as::<Indicator>()
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to search indicators")?;
 
-        // For simplicity, using a basic query - in production, use query builder
-        let indicators = sqlx::query_as::<_, Indicator>(
-            &format!(
-                "SELECT * FROM indicators WHERE {} ORDER BY last_seen DESC LIMIT {} OFFSET {}",
-                where_clause, per_page, offset
-            )
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to search indicators")?;
+        let mut count: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT COUNT(*) FROM indicators WHERE 1=1");
+        push_indicator_filters(&mut count, filter, normalized.search_pattern.as_deref());
+        let total: (i64,) = count
+            .build_query_as()
+            .fetch_one(&self.pool)
+            .await
+            .context("Failed to count indicators")?;
 
-        let total: (i64,) = sqlx::query_as(
-            &format!("SELECT COUNT(*) FROM indicators WHERE {}", where_clause)
-        )
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to count indicators")?;
+        let total_pages = if total.0 == 0 {
+            0
+        } else {
+            (total.0 + normalized.per_page - 1) / normalized.per_page
+        };
 
         Ok(PaginatedResponse {
             data: indicators,
             total: total.0,
-            page,
-            per_page,
-            total_pages: (total.0 as f64 / per_page as f64).ceil() as i64,
+            page: normalized.page,
+            per_page: normalized.per_page,
+            total_pages,
         })
+    }
+
+    /// Delete an indicator and its dependent rows. Returns false when missing.
+    pub async fn delete_indicator(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM indicators WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete indicator")?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Update threat score for an indicator
@@ -205,7 +224,7 @@ impl ThreatIntelRepo {
     /// Delete expired indicators
     pub async fn delete_expired(&self) -> Result<i64> {
         let result = sqlx::query(
-            "DELETE FROM indicators WHERE expiration IS NOT NULL AND expiration < NOW()"
+            "DELETE FROM indicators WHERE expiration IS NOT NULL AND expiration < NOW()",
         )
         .execute(&self.pool)
         .await
@@ -254,7 +273,7 @@ impl ThreatIntelRepo {
     /// Get enrichments for an indicator
     pub async fn get_enrichments(&self, indicator_id: Uuid) -> Result<Vec<Enrichment>> {
         let enrichments = sqlx::query_as::<_, Enrichment>(
-            "SELECT * FROM enrichments WHERE indicator_id = $1 ORDER BY fetched_at DESC"
+            "SELECT * FROM enrichments WHERE indicator_id = $1 ORDER BY fetched_at DESC",
         )
         .bind(indicator_id)
         .fetch_all(&self.pool)
@@ -278,7 +297,7 @@ impl ThreatIntelRepo {
             INSERT INTO sightings (id, indicator_id, source, context, observed_at, created_at)
             VALUES ($1, $2, $3, $4, NOW(), NOW())
             RETURNING *
-            "#
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(indicator_id)
@@ -299,13 +318,12 @@ impl ThreatIntelRepo {
 
     /// Count sightings for an indicator
     pub async fn count_sightings(&self, indicator_id: Uuid) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sightings WHERE indicator_id = $1"
-        )
-        .bind(indicator_id)
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to count sightings")?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sightings WHERE indicator_id = $1")
+                .bind(indicator_id)
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to count sightings")?;
 
         Ok(count.0)
     }
@@ -343,7 +361,7 @@ impl ThreatIntelRepo {
     /// Get all enabled sources
     pub async fn get_enabled_sources(&self) -> Result<Vec<IocSource>> {
         let sources = sqlx::query_as::<_, IocSource>(
-            "SELECT * FROM ioc_sources WHERE enabled = true ORDER BY name"
+            "SELECT * FROM ioc_sources WHERE enabled = true ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -371,23 +389,21 @@ impl ThreatIntelRepo {
             .fetch_one(&self.pool)
             .await?;
 
-        let new_today: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM indicators WHERE created_at >= CURRENT_DATE"
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let new_today: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM indicators WHERE created_at >= CURRENT_DATE")
+                .fetch_one(&self.pool)
+                .await?;
 
         let new_this_week: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM indicators WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'"
+            "SELECT COUNT(*) FROM indicators WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'",
         )
         .fetch_one(&self.pool)
         .await?;
 
-        let active_sources: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM ioc_sources WHERE enabled = true"
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let active_sources: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM ioc_sources WHERE enabled = true")
+                .fetch_one(&self.pool)
+                .await?;
 
         let recent_sightings: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sightings WHERE observed_at >= CURRENT_DATE - INTERVAL '24 hours'"
@@ -405,5 +421,44 @@ impl ThreatIntelRepo {
             top_tags: vec![], // TODO: implement
             recent_sightings: recent_sightings.0,
         })
+    }
+}
+
+fn push_indicator_filters<'a>(
+    builder: &mut QueryBuilder<'a, Postgres>,
+    filter: &'a IndicatorFilter,
+    search_pattern: Option<&'a str>,
+) {
+    if let Some(ioc_type) = &filter.ioc_type {
+        builder.push(" AND ioc_type = ");
+        builder.push_bind(ioc_type);
+    }
+    if let Some(severity) = &filter.severity {
+        builder.push(" AND severity = ");
+        builder.push_bind(severity);
+    }
+    if let Some(min_confidence) = filter.min_confidence {
+        builder.push(" AND confidence >= ");
+        builder.push_bind(min_confidence);
+    }
+    if let Some(min_threat_score) = filter.min_threat_score {
+        builder.push(" AND threat_score >= ");
+        builder.push_bind(min_threat_score);
+    }
+    if let Some(pattern) = search_pattern {
+        builder.push(" AND value ILIKE ");
+        builder.push_bind(pattern);
+        builder.push(" ESCAPE '\\'");
+    }
+    if let Some(tags) = &filter.tags
+        && !tags.is_empty()
+    {
+        builder.push(" AND tags @> ");
+        builder.push_bind(tags);
+    }
+    if let Some(source_id) = filter.source_id {
+        builder.push(" AND ");
+        builder.push_bind(source_id);
+        builder.push(" = ANY(source_ids)");
     }
 }

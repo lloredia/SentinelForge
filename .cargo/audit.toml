@@ -1,0 +1,4 @@
+# rsa is pulled into Cargo.lock by sqlx's optional MySQL driver (sqlx-mysql),
+# which this crate does not enable. `cargo tree -i rsa` is empty.
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]
